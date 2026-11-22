@@ -9,15 +9,16 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.RelativeSizeSpan
+import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.widget.TextView
-import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.random.Random
 
 class ClickService : AccessibilityService() {
@@ -27,22 +28,48 @@ class ClickService : AccessibilityService() {
     private lateinit var botao: TextView
     private lateinit var lp: WindowManager.LayoutParams
     private var rodando = false
+    private var pendente = false
     private var pausaMin = 20L
     private var pausaMax = 40L
     private var dens = 1f
+    private var ok = 0
+    private var falhas = 0
+    private var kickX = 79
+    private var kickY = 31
+    private var powX = 76
+    private var powY = 68
+
+    private val watchdog = Runnable {
+        if (pendente && rodando) {
+            pendente = false
+            falhas++
+            mostrar()
+            tocar()
+        }
+    }
 
     private fun borda(cor: Int) {
         (botao.background as GradientDrawable).setStroke((3 * dens).toInt(), cor)
     }
 
+    private fun mostrar() {
+        if (ok + falhas == 0) {
+            botao.text = "DB"
+            return
+        }
+        val s = SpannableString("DB\n✓$ok ✗$falhas")
+        s.setSpan(RelativeSizeSpan(0.45f), 2, s.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        botao.text = s
+    }
+
     override fun onServiceConnected() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         dens = resources.displayMetrics.density
-        val tam = (56 * dens).toInt()
+        val tam = (72 * dens).toInt()
 
         botao = TextView(this).apply {
             text = "DB"
-            textSize = 20f
+            textSize = 24f
             setTextColor(Color.BLACK)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -59,8 +86,8 @@ class ClickService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (resources.displayMetrics.widthPixels * 0.7f).toInt()
-            y = (resources.displayMetrics.heightPixels * 0.3f).toInt()
+            x = (resources.displayMetrics.widthPixels * 0.4f).toInt()
+            y = (resources.displayMetrics.heightPixels * 0.5f).toInt()
         }
 
         var dx = 0f; var dy = 0f; var x0 = 0f; var y0 = 0f
@@ -96,6 +123,13 @@ class ClickService : AccessibilityService() {
             val p = getSharedPreferences("cfg", MODE_PRIVATE)
             pausaMin = p.getLong("pmin", 20).coerceAtLeast(10)
             pausaMax = p.getLong("pmax", 40).coerceAtLeast(pausaMin)
+            kickX = p.getInt("kx", 79)
+            kickY = p.getInt("ky", 31)
+            powX = p.getInt("px", 76)
+            powY = p.getInt("py", 68)
+            ok = 0
+            falhas = 0
+            pendente = false
             rodando = true
             borda(Color.RED)
             tocar()
@@ -104,31 +138,59 @@ class ClickService : AccessibilityService() {
 
     private fun parar() {
         rodando = false
+        pendente = false
         handler.removeCallbacksAndMessages(null)
         if (::botao.isInitialized) borda(Color.BLACK)
     }
 
-    // Toca em volta do DB (fora da bolinha), em posição diferente a cada vez
+    // Kick e, poucos ms depois, Power, num único gesto
+    @Suppress("DEPRECATION")
     private fun tocar() {
         if (!rodando) return
-        val loc = IntArray(2)
-        botao.getLocationOnScreen(loc)
-        val cx = loc[0] + botao.width / 2f
-        val cy = loc[1] + botao.height / 2f
-        val ang = Random.nextDouble(0.0, 2 * PI)
-        val raio = Random.nextDouble(34.0, 60.0) * dens
-        val x = (cx + cos(ang) * raio).toFloat()
-        val y = (cy + sin(ang) * raio).toFloat()
-        val dur = Random.nextLong(25, 46)
+        val m = DisplayMetrics()
+        wm.defaultDisplay.getRealMetrics(m)
+        val w = m.widthPixels.toFloat()
+        val h = m.heightPixels.toFloat()
+        val atraso = Random.nextLong(20, 71)
 
-        val gesto = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, dur))
-            .build()
-        val cb = object : GestureResultCallback() {
-            override fun onCompleted(g: GestureDescription?) = proximo()
-            override fun onCancelled(g: GestureDescription?) = proximo()
+        val b = GestureDescription.Builder()
+        val pontos = listOf(Triple(kickX, kickY, 0L), Triple(powX, powY, atraso))
+        for ((fx, fy, ini) in pontos) {
+            val x = (w * fx / 100f + Random.nextDouble(-12.0, 12.0).toFloat() * dens).coerceIn(1f, w - 1f)
+            val y = (h * fy / 100f + Random.nextDouble(-12.0, 12.0).toFloat() * dens).coerceIn(1f, h - 1f)
+            b.addStroke(
+                GestureDescription.StrokeDescription(
+                    Path().apply { moveTo(x, y) }, ini, Random.nextLong(40, 71)
+                )
+            )
         }
-        if (!dispatchGesture(gesto, cb, null)) proximo()
+        val cb = object : GestureResultCallback() {
+            override fun onCompleted(g: GestureDescription?) {
+                if (!pendente) return
+                handler.removeCallbacks(watchdog)
+                pendente = false
+                ok++
+                mostrar()
+                proximo()
+            }
+            override fun onCancelled(g: GestureDescription?) {
+                if (!pendente) return
+                handler.removeCallbacks(watchdog)
+                pendente = false
+                falhas++
+                mostrar()
+                proximo()
+            }
+        }
+        pendente = true
+        handler.postDelayed(watchdog, 600)
+        if (!dispatchGesture(b.build(), cb, null)) {
+            handler.removeCallbacks(watchdog)
+            pendente = false
+            falhas++
+            mostrar()
+            proximo()
+        }
     }
 
     private fun proximo() {
