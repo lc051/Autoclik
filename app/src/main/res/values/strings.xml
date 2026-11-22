@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AutoClick</string>
+    <string name="descricao_servico">Executa toques repetidos no ponto que você escolher na tela.</string>
+</resources>
