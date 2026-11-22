@@ -26,19 +26,23 @@ class ClickService : AccessibilityService() {
     private lateinit var wm: WindowManager
     private lateinit var botao: TextView
     private lateinit var lp: WindowManager.LayoutParams
-    private var segurando = false
+    private var rodando = false
     private var pausaMin = 20L
     private var pausaMax = 40L
     private var dens = 1f
 
+    private fun borda(cor: Int) {
+        (botao.background as GradientDrawable).setStroke((3 * dens).toInt(), cor)
+    }
+
     override fun onServiceConnected() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         dens = resources.displayMetrics.density
-        val tam = (44 * dens).toInt()
+        val tam = (56 * dens).toInt()
 
         botao = TextView(this).apply {
             text = "DB"
-            textSize = 15f
+            textSize = 20f
             setTextColor(Color.BLACK)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -67,12 +71,10 @@ class ClickService : AccessibilityService() {
                     dx = e.rawX - lp.x; dy = e.rawY - lp.y
                     x0 = e.rawX; y0 = e.rawY
                     arrastando = false
-                    iniciar()
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if (!arrastando && (abs(e.rawX - x0) > 30 * dens || abs(e.rawY - y0) > 30 * dens)) {
+                    if (!arrastando && (abs(e.rawX - x0) > 12 * dens || abs(e.rawY - y0) > 12 * dens)) {
                         arrastando = true
-                        parar()
                     }
                     if (arrastando) {
                         lp.x = (e.rawX - dx).toInt()
@@ -80,35 +82,41 @@ class ClickService : AccessibilityService() {
                         wm.updateViewLayout(botao, lp)
                     }
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> parar()
+                MotionEvent.ACTION_UP -> if (!arrastando) alternar()
             }
             true
         }
         wm.addView(botao, lp)
     }
 
-    private fun iniciar() {
-        val p = getSharedPreferences("cfg", MODE_PRIVATE)
-        pausaMin = p.getLong("pmin", 20).coerceAtLeast(10)
-        pausaMax = p.getLong("pmax", 40).coerceAtLeast(pausaMin)
-        segurando = true
-        tocar()
+    private fun alternar() {
+        if (rodando) {
+            parar()
+        } else {
+            val p = getSharedPreferences("cfg", MODE_PRIVATE)
+            pausaMin = p.getLong("pmin", 20).coerceAtLeast(10)
+            pausaMax = p.getLong("pmax", 40).coerceAtLeast(pausaMin)
+            rodando = true
+            borda(Color.RED)
+            tocar()
+        }
     }
 
     private fun parar() {
-        segurando = false
+        rodando = false
         handler.removeCallbacksAndMessages(null)
+        if (::botao.isInitialized) borda(Color.BLACK)
     }
 
     // Toca em volta do DB (fora da bolinha), em posição diferente a cada vez
     private fun tocar() {
-        if (!segurando) return
+        if (!rodando) return
         val loc = IntArray(2)
         botao.getLocationOnScreen(loc)
         val cx = loc[0] + botao.width / 2f
         val cy = loc[1] + botao.height / 2f
         val ang = Random.nextDouble(0.0, 2 * PI)
-        val raio = Random.nextDouble(28.0, 48.0) * dens
+        val raio = Random.nextDouble(34.0, 60.0) * dens
         val x = (cx + cos(ang) * raio).toFloat()
         val y = (cy + sin(ang) * raio).toFloat()
         val dur = Random.nextLong(25, 46)
@@ -124,7 +132,7 @@ class ClickService : AccessibilityService() {
     }
 
     private fun proximo() {
-        if (!segurando) return
+        if (!rodando) return
         handler.postDelayed({ tocar() }, Random.nextLong(pausaMin, pausaMax + 1))
     }
 
